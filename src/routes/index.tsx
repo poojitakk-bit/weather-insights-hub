@@ -1,4 +1,3 @@
-```tsx
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Suspense,
@@ -142,7 +141,6 @@ function Dashboard() {
 
   const loadLocationAnalysis = useCallback(
     (lat: number, lng: number) => {
-      // Cancel previous weather request
       weatherAbortRef.current?.abort();
 
       const controller = new AbortController();
@@ -152,7 +150,6 @@ function Dashboard() {
       const requestId =
         ++weatherRequestRef.current;
 
-      // Reset UI
       setWeatherStatus("loading");
       setWeatherError(null);
 
@@ -201,8 +198,6 @@ function Dashboard() {
               runoff24h:
                 result.metrics.runoff24hMm ?? 0,
 
-              // We don't currently have elevation from
-              // Open-Meteo, so use a prototype default.
               elevationM: 500,
             });
 
@@ -287,7 +282,9 @@ function Dashboard() {
 
       setPinnedLocationName(
         name ??
-          `${lat.toFixed(3)}, ${lng.toFixed(3)}`,
+          String(lat.toFixed(3)) +
+            ", " +
+            String(lng.toFixed(3)),
       );
 
       loadLocationAnalysis(lat, lng);
@@ -518,10 +515,6 @@ function Dashboard() {
               <Waves className="size-4" />
             }
           >
-            {/* -------------------------------------------------
-                EXISTING MODELLED CITY
-            -------------------------------------------------- */}
-
             {!pinnedLocation ? (
               blocked ? (
                 status === "error" ? (
@@ -541,10 +534,6 @@ function Dashboard() {
               )
             ) : null}
 
-            {/* -------------------------------------------------
-                LIVE WEATHER FOR CLICKED LOCATION
-            -------------------------------------------------- */}
-
             {pinnedLocation ? (
               <>
                 <LiveWeatherPanel
@@ -558,10 +547,6 @@ function Dashboard() {
                     handleRetryWeather
                   }
                 />
-
-                {/* ------------------------------------------------
-                    ACTUAL RANDOM FOREST RESULT
-                ------------------------------------------------- */}
 
                 <div className="mt-4 rounded-xl border border-border bg-surface/40 p-4">
                   <div className="flex items-center justify-between gap-3">
@@ -895,4 +880,3 @@ function Dashboard() {
     </div>
   );
 }
-```
