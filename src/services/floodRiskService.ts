@@ -169,3 +169,60 @@ export function sourceAgreement(
   if (ratio <= 0.8) return { level: "partial", detail };
   return { level: "diverge", detail };
 }
+/**
+ * Calls the Python Random Forest flood prediction API.
+ *
+ * The frontend keeps the existing UI/data structures, while the actual
+ * prediction is performed by the trained ML model.
+ */
+export async function predictWithML(input: {
+  latitude: number;
+  longitude: number;
+  rainfall24h: number;
+  temperature: number;
+  humidity: number;
+  runoff24h: number;
+  elevationM: number;
+}) {
+  const response = await fetch("http://127.0.0.1:8000/predict", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      Latitude: input.latitude,
+      Longitude: input.longitude,
+
+      "Rainfall (mm)": input.rainfall24h,
+      "Temperature (°C)": input.temperature,
+      "Humidity (%)": input.humidity,
+
+      // Open-Meteo runoff is used as the hydrological signal.
+      // The trained model expects River Discharge, so we use runoff
+      // as a prototype proxy until live river-gauge data is connected.
+      "River Discharge (m³/s)": input.runoff24h * 10,
+
+      "Water Level (m)": 2,
+
+      "Elevation (m)": input.elevationM,
+
+      // These are prototype defaults because the current live feeds
+      // do not provide these features at the clicked location.
+      "Land Cover": "Urban",
+      "Soil Type": "Loam",
+      "Population Density": 5000,
+      "Infrastructure": 0,
+      "Historical Floods": 0,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`ML prediction failed: HTTP ${response.status}`);
+  }
+
+  return response.json() as Promise<{
+    flood: number;
+    probability: number;
+    risk_level: string;
+  }>;
+}
