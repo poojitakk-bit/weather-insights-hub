@@ -1,5 +1,13 @@
+```tsx
 import { createFileRoute } from "@tanstack/react-router";
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   BarChart3,
   Brain,
@@ -19,13 +27,19 @@ import { DataQualityPanel } from "@/components/flood/DataQualityPanel";
 import { Header } from "@/components/flood/Header";
 import { InundationPanel } from "@/components/flood/InundationPanel";
 import { LocationDetails } from "@/components/flood/LocationDetails";
-import { LiveWeatherPanel, type PinnedWeatherStatus } from "@/components/flood/LiveWeatherPanel";
+import {
+  LiveWeatherPanel,
+  type PinnedWeatherStatus,
+} from "@/components/flood/LiveWeatherPanel";
 import { RainfallTimeline } from "@/components/flood/RainfallTimeline";
 import { ReportForm } from "@/components/flood/ReportForm";
 import { ReportsFeed } from "@/components/flood/ReportsFeed";
 import { SummaryCards } from "@/components/flood/SummaryCards";
 import { AssistantChat } from "@/components/flood/AssistantChat";
-import { NearestSafePlace, type SafePlaceState } from "@/components/flood/NearestSafePlace";
+import {
+  NearestSafePlace,
+  type SafePlaceState,
+} from "@/components/flood/NearestSafePlace";
 import { WhyThisRisk } from "@/components/flood/WhyThisRisk";
 import {
   EmptyState,
@@ -37,13 +51,19 @@ import {
 import { DISCLAIMER } from "@/lib/flood/mock-data";
 import { clockTime } from "@/lib/flood/format";
 import { useFloodModel } from "@/lib/flood/useFloodModel";
-import { getLocationWeather, type LocationWeather } from "@/services/weatherService";
+import {
+  getLocationWeather,
+  type LocationWeather,
+} from "@/services/weatherService";
+import { predictWithML } from "@/services/floodRiskService";
 
 const IndiaMap = lazy(() => import("@/components/flood/IndiaMap"));
 
-const TITLE = "India Flood Intelligence — Rainfall & Inundation Early Warning Prototype";
+const TITLE =
+  "India Flood Intelligence — Rainfall & Inundation Early Warning Prototype";
+
 const DESCRIPTION =
-  "Research prototype dashboard for AI/ML heavy-rainfall early warning and flood inundation prediction across ten Indian cities, with demo-mode simulated data.";
+  "Research prototype dashboard for AI/ML heavy-rainfall early warning and flood inundation prediction.";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -57,76 +77,275 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
+type MLResult = {
+  flood: number;
+  probability: number;
+  risk_level: string;
+};
+
 function Dashboard() {
   const model = useFloodModel();
+
   const [mounted, setMounted] = useState(false);
+
   const [safeState, setSafeState] = useState<SafePlaceState>({
     coords: null,
     places: [],
     nearestCity: null,
   });
+
   useEffect(() => setMounted(true), []);
 
-  // Free-click map location + its live Open-Meteo weather (independent of the demo-city mock model).
-  const [pinnedLocation, setPinnedLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [weatherStatus, setWeatherStatus] = useState<PinnedWeatherStatus>("loading");
-  const [weather, setWeather] = useState<LocationWeather | null>(null);
-  const [weatherError, setWeatherError] = useState<string | null>(null);
+  // ------------------------------------------------------------
+  // LIVE LOCATION WEATHER
+  // ------------------------------------------------------------
+
+  const [pinnedLocation, setPinnedLocation] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+
+  const [pinnedLocationName, setPinnedLocationName] =
+    useState<string | null>(null);
+
+  const [weatherStatus, setWeatherStatus] =
+    useState<PinnedWeatherStatus>("loading");
+
+  const [weather, setWeather] =
+    useState<LocationWeather | null>(null);
+
+  const [weatherError, setWeatherError] =
+    useState<string | null>(null);
+
+  // ------------------------------------------------------------
+  // MACHINE LEARNING RESULT
+  // ------------------------------------------------------------
+
+  const [mlResult, setMlResult] =
+    useState<MLResult | null>(null);
+
+  const [mlStatus, setMlStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+
+  const [mlError, setMlError] =
+    useState<string | null>(null);
+
   const weatherRequestRef = useRef(0);
-  const weatherAbortRef = useRef<AbortController | null>(null);
 
-  const loadWeather = useCallback((lat: number, lng: number) => {
-    // Cancel any in-flight request and tag this one, so a stale response from an
-    // earlier rapid click can never overwrite the weather for the latest click.
-    weatherAbortRef.current?.abort();
-    const controller = new AbortController();
-    weatherAbortRef.current = controller;
-    const requestId = ++weatherRequestRef.current;
+  const weatherAbortRef =
+    useRef<AbortController | null>(null);
 
-    setWeatherStatus("loading");
-    setWeatherError(null);
+  // ------------------------------------------------------------
+  // LOAD WEATHER + RUN ML
+  // ------------------------------------------------------------
 
-    getLocationWeather(lat, lng, controller.signal)
-      .then((result) => {
-        if (weatherRequestRef.current !== requestId) return;
-        setWeather(result);
-        setWeatherStatus("ready");
-      })
-      .catch((err: unknown) => {
-        if (weatherRequestRef.current !== requestId) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setWeatherStatus("error");
-        setWeatherError(err instanceof Error ? err.message : "Could not load live weather.");
-      });
-  }, []);
-
-  const handleMapClick = useCallback(
+  const loadLocationAnalysis = useCallback(
     (lat: number, lng: number) => {
-      setPinnedLocation({ lat, lng });
-      loadWeather(lat, lng);
+      // Cancel previous weather request
+      weatherAbortRef.current?.abort();
+
+      const controller = new AbortController();
+
+      weatherAbortRef.current = controller;
+
+      const requestId =
+        ++weatherRequestRef.current;
+
+      // Reset UI
+      setWeatherStatus("loading");
+      setWeatherError(null);
+
+      setMlStatus("loading");
+      setMlError(null);
+      setMlResult(null);
+
+      // --------------------------------------------------------
+      // STEP 1 — GET LIVE WEATHER
+      // --------------------------------------------------------
+
+      getLocationWeather(
+        lat,
+        lng,
+        controller.signal,
+      )
+        .then(async (result) => {
+          if (
+            weatherRequestRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          setWeather(result);
+          setWeatherStatus("ready");
+
+          // ------------------------------------------------------
+          // STEP 2 — SEND LIVE WEATHER TO RANDOM FOREST
+          // ------------------------------------------------------
+
+          try {
+            const ml = await predictWithML({
+              latitude: lat,
+              longitude: lng,
+
+              rainfall24h:
+                result.metrics.next24hMm ?? 0,
+
+              temperature:
+                result.current.temperatureC ?? 25,
+
+              humidity:
+                result.current.humidityPct ?? 70,
+
+              runoff24h:
+                result.metrics.runoff24hMm ?? 0,
+
+              // We don't currently have elevation from
+              // Open-Meteo, so use a prototype default.
+              elevationM: 500,
+            });
+
+            if (
+              weatherRequestRef.current !==
+              requestId
+            ) {
+              return;
+            }
+
+            setMlResult(ml);
+            setMlStatus("ready");
+          } catch (error) {
+            if (
+              weatherRequestRef.current !==
+              requestId
+            ) {
+              return;
+            }
+
+            console.error(
+              "ML prediction failed:",
+              error,
+            );
+
+            setMlStatus("error");
+
+            setMlError(
+              error instanceof Error
+                ? error.message
+                : "ML prediction failed.",
+            );
+          }
+        })
+        .catch((err: unknown) => {
+          if (
+            weatherRequestRef.current !==
+            requestId
+          ) {
+            return;
+          }
+
+          if (
+            err instanceof DOMException &&
+            err.name === "AbortError"
+          ) {
+            return;
+          }
+
+          setWeatherStatus("error");
+
+          setWeatherError(
+            err instanceof Error
+              ? err.message
+              : "Could not load live weather.",
+          );
+
+          setMlStatus("error");
+
+          setMlError(
+            "ML prediction could not run because live weather data failed.",
+          );
+        });
     },
-    [loadWeather],
+    [],
   );
 
-  const handleRetryWeather = useCallback(() => {
-    if (pinnedLocation) loadWeather(pinnedLocation.lat, pinnedLocation.lng);
-  }, [pinnedLocation, loadWeather]);
+  // ------------------------------------------------------------
+  // MAP CLICK / SEARCH
+  // ------------------------------------------------------------
 
-  // Clicking a predefined city keeps working exactly as before, and also clears any pin.
+  const handleMapClick = useCallback(
+    (
+      lat: number,
+      lng: number,
+      name?: string,
+    ) => {
+      setPinnedLocation({
+        lat,
+        lng,
+      });
+
+      setPinnedLocationName(
+        name ??
+          `${lat.toFixed(3)}, ${lng.toFixed(3)}`,
+      );
+
+      loadLocationAnalysis(lat, lng);
+    },
+    [loadLocationAnalysis],
+  );
+
+  // ------------------------------------------------------------
+  // RETRY
+  // ------------------------------------------------------------
+
+  const handleRetryWeather =
+    useCallback(() => {
+      if (!pinnedLocation) return;
+
+      loadLocationAnalysis(
+        pinnedLocation.lat,
+        pinnedLocation.lng,
+      );
+    }, [
+      pinnedLocation,
+      loadLocationAnalysis,
+    ]);
+
+  // ------------------------------------------------------------
+  // EXISTING DEMO CITY SELECTION
+  // ------------------------------------------------------------
+
   const handleSelectCity = useCallback(
     (id: string) => {
       setPinnedLocation(null);
+      setPinnedLocationName(null);
+
+      setMlResult(null);
+      setMlStatus("idle");
+
       model.setSelectedId(id);
     },
     [model.setSelectedId],
   );
 
-  const { status, offline, selected } = model;
-  const blocked = status === "loading" || status === "error" || !selected;
+  const {
+    status,
+    offline,
+    selected,
+  } = model;
+
+  const blocked =
+    status === "loading" ||
+    status === "error" ||
+    !selected;
 
   return (
     <div className="app-backdrop min-h-screen pb-16">
-      <div className="app-grid-overlay" aria-hidden />
+      <div
+        className="app-grid-overlay"
+        aria-hidden
+      />
 
       <Header
         scenario={model.scenario}
@@ -138,16 +357,25 @@ function Dashboard() {
       <main className="relative mx-auto mt-5 max-w-[1500px] space-y-4 px-4 sm:px-6">
         {offline ? (
           <div className="glass-panel rounded-2xl p-4">
-            <OfflineState lastUpdated={clockTime(model.tickIso)} />
+            <OfflineState
+              lastUpdated={clockTime(
+                model.tickIso,
+              )}
+            />
           </div>
         ) : null}
 
-        {/* 1. National map + 10. Demo controls */}
+        {/* =====================================================
+            1. NATIONAL MAP
+        ====================================================== */}
+
         <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
           <Panel
             title="National India map"
-            subtitle="Ten demonstration cities with simulated risk and predicted inundation. Search any place to fly the map."
-            icon={<MapPinned className="size-4" />}
+            subtitle="Search or click any location to analyse live weather and ML flood risk."
+            icon={
+              <MapPinned className="size-4" />
+            }
             bodyClassName="p-3 sm:p-3"
           >
             {status === "error" ? (
@@ -158,26 +386,50 @@ function Dashboard() {
                   model.refresh();
                 }}
               />
-            ) : !mounted || status === "loading" ? (
+            ) : !mounted ||
+              status === "loading" ? (
               <LoadingState label="Initialising map tiles and risk grid…" />
             ) : (
-              <Suspense fallback={<LoadingState label="Loading map…" />}>
+              <Suspense
+                fallback={
+                  <LoadingState label="Loading map…" />
+                }
+              >
                 <IndiaMap
-                  assessments={model.assessments}
-                  selectedId={model.selectedId}
-                  onSelect={handleSelectCity}
-                  showInundation={model.showInundation}
-                  onToggleInundation={model.setShowInundation}
-                  userLocation={safeState.coords}
-                  safePlaces={safeState.places.map((p) => ({
-                    id: p.id,
-                    name: p.name,
-                    lat: p.lat,
-                    lng: p.lng,
-                    distanceKm: p.distanceKm,
-                  }))}
-                  pinnedLocation={pinnedLocation}
-                  onMapClick={handleMapClick}
+                  assessments={
+                    model.assessments
+                  }
+                  selectedId={
+                    model.selectedId
+                  }
+                  onSelect={
+                    handleSelectCity
+                  }
+                  showInundation={
+                    model.showInundation
+                  }
+                  onToggleInundation={
+                    model.setShowInundation
+                  }
+                  userLocation={
+                    safeState.coords
+                  }
+                  safePlaces={safeState.places.map(
+                    (p) => ({
+                      id: p.id,
+                      name: p.name,
+                      lat: p.lat,
+                      lng: p.lng,
+                      distanceKm:
+                        p.distanceKm,
+                    }),
+                  )}
+                  pinnedLocation={
+                    pinnedLocation
+                  }
+                  onMapClick={
+                    handleMapClick
+                  }
                 />
               </Suspense>
             )}
@@ -186,209 +438,456 @@ function Dashboard() {
           <Panel
             title="Demo Mode controls"
             subtitle="Switch simulated scenarios and exercise loading, error and offline states."
-            icon={<Settings2 className="size-4" />}
+            icon={
+              <Settings2 className="size-4" />
+            }
           >
             <DemoControls model={model} />
           </Panel>
         </div>
 
-        {/* 2. Forecast & flood-risk summary cards */}
+        {/* =====================================================
+            2. FORECAST SUMMARY
+        ====================================================== */}
+
         <Panel
           title="Forecast & flood-risk summary"
           subtitle="Ranked by risk score. Every card shows rainfall, depth, onset and confidence."
-          icon={<LayoutDashboard className="size-4" />}
+          icon={
+            <LayoutDashboard className="size-4" />
+          }
         >
           {status === "error" ? (
-            <ErrorState message="Could not compute city risk summaries" onRetry={model.refresh} />
+            <ErrorState
+              message="Could not compute city risk summaries"
+              onRetry={model.refresh}
+            />
           ) : status === "loading" ? (
             <LoadingState />
           ) : (
             <SummaryCards
-              assessments={model.assessments}
-              selectedId={model.selectedId}
-              onSelect={handleSelectCity}
+              assessments={
+                model.assessments
+              }
+              selectedId={
+                model.selectedId
+              }
+              onSelect={
+                handleSelectCity
+              }
             />
           )}
         </Panel>
 
-        {/* Nearest safe place for current location */}
+        {/* =====================================================
+            NEAREST SAFE PLACE
+        ====================================================== */}
+
         <Panel
           title="Nearest safe place for your current location"
           subtitle="GPS-ranked shelters, raised hospitals, school refuges and high-ground assembly points."
-          icon={<ShieldCheck className="size-4" />}
+          icon={
+            <ShieldCheck className="size-4" />
+          }
         >
           <NearestSafePlace
             assessments={model.assessments}
             onLocate={setSafeState}
-            onSelectCity={handleSelectCity}
+            onSelectCity={
+              handleSelectCity
+            }
           />
         </Panel>
 
-        {/* 3. Selected location + 4. timeline */}
+        {/* =====================================================
+            3. LOCATION DETAILS
+        ====================================================== */}
+
         <div className="grid gap-4 xl:grid-cols-2">
           <Panel
             title="Selected location details"
-            subtitle="Full prediction record for the selected city."
-            icon={<Waves className="size-4" />}
+            subtitle={
+              pinnedLocation
+                ? `Live analysis for ${
+                    pinnedLocationName ??
+                    "selected point"
+                  }`
+                : "Full prediction record for the selected city."
+            }
+            icon={
+              <Waves className="size-4" />
+            }
           >
-            {blocked ? (
-              status === "error" ? (
-                <ErrorState message="Location prediction unavailable" onRetry={model.refresh} />
+            {/* -------------------------------------------------
+                EXISTING MODELLED CITY
+            -------------------------------------------------- */}
+
+            {!pinnedLocation ? (
+              blocked ? (
+                status === "error" ? (
+                  <ErrorState
+                    message="Location prediction unavailable"
+                    onRetry={
+                      model.refresh
+                    }
+                  />
+                ) : (
+                  <LoadingState />
+                )
               ) : (
-                <LoadingState />
+                <LocationDetails
+                  assessment={selected}
+                />
               )
-            ) : (
-              <LocationDetails assessment={selected} />
-            )}
+            ) : null}
+
+            {/* -------------------------------------------------
+                LIVE WEATHER FOR CLICKED LOCATION
+            -------------------------------------------------- */}
+
             {pinnedLocation ? (
-              <LiveWeatherPanel
-                coords={pinnedLocation}
-                status={weatherStatus}
-                weather={weather}
-                error={weatherError}
-                onRetry={handleRetryWeather}
-              />
+              <>
+                <LiveWeatherPanel
+                  coords={pinnedLocation}
+                  status={
+                    weatherStatus
+                  }
+                  weather={weather}
+                  error={weatherError}
+                  onRetry={
+                    handleRetryWeather
+                  }
+                />
+
+                {/* ------------------------------------------------
+                    ACTUAL RANDOM FOREST RESULT
+                ------------------------------------------------- */}
+
+                <div className="mt-4 rounded-xl border border-border bg-surface/40 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        AI / ML Flood Prediction
+                      </p>
+
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Random Forest prediction from live weather features
+                      </p>
+                    </div>
+
+                    <Brain className="size-5 text-info" />
+                  </div>
+
+                  {mlStatus === "loading" ? (
+                    <div className="mt-4">
+                      <LoadingState label="Running Random Forest prediction…" />
+                    </div>
+                  ) : mlStatus === "error" ? (
+                    <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                      {mlError ??
+                        "ML prediction unavailable."}
+                    </div>
+                  ) : mlStatus === "ready" &&
+                    mlResult ? (
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-border bg-surface p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          Flood probability
+                        </p>
+
+                        <p className="mt-1 text-2xl font-bold text-foreground">
+                          {
+                            mlResult.probability
+                          }
+                          %
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-border bg-surface p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          Risk level
+                        </p>
+
+                        <p className="mt-1 text-2xl font-bold uppercase text-foreground">
+                          {
+                            mlResult.risk_level
+                          }
+                        </p>
+                      </div>
+
+                      <div className="col-span-2 rounded-lg border border-border bg-surface p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          Model decision
+                        </p>
+
+                        <p className="mt-1 text-sm text-foreground">
+                          {mlResult.flood ===
+                          1
+                            ? "Flood conditions detected by the model."
+                            : "No flood conditions detected by the model."}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-xs text-muted-foreground">
+                      Select a point on the map to run the ML model.
+                    </p>
+                  )}
+                </div>
+              </>
             ) : null}
           </Panel>
+
+          {/* ===================================================
+              4. RAINFALL TIMELINE
+          ==================================================== */}
 
           <Panel
             title="Rainfall forecast timeline"
             subtitle={
               pinnedLocation
-                ? "Live hourly precipitation from Open-Meteo for the pinned point, next hours."
+                ? "Live hourly precipitation from Open-Meteo for the pinned point."
                 : "3-hourly accumulation with ensemble uncertainty band, next 27 hours."
             }
-            icon={<CloudRain className="size-4" />}
+            icon={
+              <CloudRain className="size-4" />
+            }
           >
             {pinnedLocation ? (
-              weatherStatus === "error" ? (
+              weatherStatus ===
+              "error" ? (
                 <ErrorState
-                  message={weatherError ?? "Could not load live rainfall data"}
-                  onRetry={handleRetryWeather}
+                  message={
+                    weatherError ??
+                    "Could not load live rainfall data"
+                  }
+                  onRetry={
+                    handleRetryWeather
+                  }
                 />
-              ) : weatherStatus === "loading" || !weather ? (
+              ) : weatherStatus ===
+                  "loading" ||
+                !weather ? (
                 <LoadingState label="Fetching live hourly rainfall from Open-Meteo…" />
-              ) : weather.timeline.length === 0 ? (
+              ) : weather.timeline
+                  .length === 0 ? (
                 <EmptyState
                   title="No forecast hours"
                   description="Open-Meteo returned no hourly precipitation for this window."
                 />
               ) : (
-                <RainfallTimeline timeline={weather.timeline} />
+                <RainfallTimeline
+                  timeline={
+                    weather.timeline
+                  }
+                />
               )
             ) : blocked ? (
               status === "error" ? (
-                <ErrorState message="Forecast timeline unavailable" onRetry={model.refresh} />
+                <ErrorState
+                  message="Forecast timeline unavailable"
+                  onRetry={
+                    model.refresh
+                  }
+                />
               ) : (
                 <LoadingState />
               )
-            ) : selected.timeline.length === 0 ? (
+            ) : selected.timeline
+                .length === 0 ? (
               <EmptyState
                 title="No forecast blocks"
                 description="The simulated NWP run returned no rainfall for this window."
               />
             ) : (
-              <RainfallTimeline timeline={selected.timeline} />
+              <RainfallTimeline
+                timeline={
+                  selected.timeline
+                }
+              />
             )}
           </Panel>
         </div>
 
-        {/* 5. Inundation + 9. Why this risk */}
+        {/* =====================================================
+            5. INUNDATION + WHY THIS RISK
+        ====================================================== */}
+
         <div className="grid gap-4 xl:grid-cols-2">
           <Panel
             title="Predicted inundation layer"
             subtitle="Depth bands used to shade the map footprint."
-            icon={<BarChart3 className="size-4" />}
+            icon={
+              <BarChart3 className="size-4" />
+            }
           >
             {blocked ? (
               status === "error" ? (
-                <ErrorState message="Inundation surface unavailable" onRetry={model.refresh} />
+                <ErrorState
+                  message="Inundation surface unavailable"
+                  onRetry={
+                    model.refresh
+                  }
+                />
               ) : (
                 <LoadingState />
               )
-            ) : selected.inundation.length === 0 ? (
+            ) : selected.inundation
+                .length === 0 ? (
               <EmptyState
                 title="No inundation predicted"
                 description="Modelled depths stay below the 0.1 m reporting threshold for this scenario."
               />
             ) : (
-              <InundationPanel assessment={selected} />
+              <InundationPanel
+                assessment={selected}
+              />
             )}
           </Panel>
 
           <Panel
             title="Why this risk?"
             subtitle="Explainable contribution of each driver to the current score."
-            icon={<Brain className="size-4" />}
+            icon={
+              <Brain className="size-4" />
+            }
           >
             {blocked ? (
               status === "error" ? (
-                <ErrorState message="Explanation unavailable" onRetry={model.refresh} />
+                <ErrorState
+                  message="Explanation unavailable"
+                  onRetry={
+                    model.refresh
+                  }
+                />
               ) : (
                 <LoadingState />
               )
             ) : (
-              <WhyThisRisk assessment={selected} />
+              <WhyThisRisk
+                assessment={selected}
+              />
             )}
           </Panel>
         </div>
 
-        {/* 6. Data sources + 7/8. reports */}
+        {/* =====================================================
+            6. DATA SOURCES + REPORTS
+        ====================================================== */}
+
         <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
           <Panel
             title="Data sources & data quality"
             subtitle="Adapter slots for satellite, radar, station, NWP and hydrology feeds."
-            icon={<Database className="size-4" />}
+            icon={
+              <Database className="size-4" />
+            }
           >
-            <DataQualityPanel offline={offline} />
+            <DataQualityPanel
+              offline={offline}
+            />
           </Panel>
 
           <div className="space-y-4">
             <Panel
               title="Citizen flood report"
               subtitle="Crowd observations to complement model output."
-              icon={<MessageSquarePlus className="size-4" />}
+              icon={
+                <MessageSquarePlus className="size-4" />
+              }
             >
-              <ReportForm defaultLocationId={model.selectedId} onSubmit={model.addReport} />
+              <ReportForm
+                defaultLocationId={
+                  model.selectedId
+                }
+                onSubmit={
+                  model.addReport
+                }
+              />
             </Panel>
 
             <Panel
               title="Recent flood reports"
               subtitle="Newest first · unverified until gauge cross-check."
-              icon={<Radio className="size-4" />}
+              icon={
+                <Radio className="size-4" />
+              }
             >
-              <ReportsFeed reports={model.reports} />
+              <ReportsFeed
+                reports={model.reports}
+              />
             </Panel>
           </div>
         </div>
 
+        {/* =====================================================
+            FOOTER
+        ====================================================== */}
+
         <footer className="glass-panel rounded-2xl px-4 py-4 text-xs leading-relaxed text-muted-foreground">
-          <p className="text-foreground">{DISCLAIMER}</p>
+          <p className="text-foreground">
+            {DISCLAIMER}
+          </p>
+
           <p className="mt-1.5">
-            Hackathon prototype · no live satellite or radar data is used · basemap ©
-            OpenStreetMap contributors · architecture keeps satellite, radar, weather
-            station and NWP integrations as pluggable modules.
+            Hackathon prototype · live weather + ML
+            prediction enabled · basemap ©
+            OpenStreetMap contributors · satellite,
+            radar, weather and NWP integrations are
+            pluggable modules.
           </p>
         </footer>
       </main>
 
+      {/* =======================================================
+          AI ASSISTANT CONTEXT
+      ======================================================== */}
+
       <AssistantChat
         context={[
-          `Scenario: ${model.scenario}. Updated ${clockTime(model.tickIso)} IST.`,
+          `Scenario: ${model.scenario}. Updated ${clockTime(
+            model.tickIso,
+          )} IST.`,
+
           selected
             ? `Selected city: ${selected.locationId} — risk ${selected.score}/100 (${selected.level}), ${selected.rainfall24hMm} mm/24h, ${selected.rainfall6hMm} mm/6h, predicted depth ${selected.waterDepthM} m, onset in ~${selected.onsetHours} h, confidence ${selected.confidence}%. Advisory: ${selected.advisory}.`
             : "No city selected yet.",
+
           selected
             ? `Top drivers: ${selected.factors
-                .map((f) => `${f.label} ${f.contribution}%`)
+                .map(
+                  (f) =>
+                    `${f.label} ${f.contribution}%`,
+                )
                 .join(", ")}.`
             : "",
+
+          pinnedLocation &&
+          mlResult
+            ? `Live ML analysis at ${
+                pinnedLocationName ??
+                "pinned location"
+              }: flood probability ${
+                mlResult.probability
+              }%, risk ${
+                mlResult.risk_level
+              }, flood ${
+                mlResult.flood === 1
+                  ? "detected"
+                  : "not detected"
+              }.`
+            : "",
+
           safeState.places.length
             ? `User's nearest safe places: ${safeState.places
-                .map((p) => `${p.name} (${p.distanceKm} km ${p.bearing}, ~${p.etaMinutes} min)`)
+                .map(
+                  (p) =>
+                    `${p.name} (${p.distanceKm} km ${p.bearing}, ~${p.etaMinutes} min)`,
+                )
                 .join("; ")}.`
             : "User has not shared their location yet.",
-          "All values are simulated demo data from a research prototype.",
+
+          "The ML prototype uses a Random Forest trained on the synthetic India flood-risk dataset. Live weather values are used as model inputs.",
         ]
           .filter(Boolean)
           .join("\n")}
@@ -396,4 +895,4 @@ function Dashboard() {
     </div>
   );
 }
-
+```
