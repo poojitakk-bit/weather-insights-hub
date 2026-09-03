@@ -198,7 +198,7 @@ function Dashboard() {
               runoff24h:
                 result.metrics.runoff24hMm ?? 0,
 
-              elevationM: 500,
+              elevationM: result.elevationM ?? 0,
             });
 
             if (
