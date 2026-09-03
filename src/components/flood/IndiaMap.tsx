@@ -8,6 +8,13 @@ import { levelHex } from "@/lib/flood/format";
 import { searchPlaces, type SearchPlace } from "@/lib/flood/places";
 import type { RiskAssessment } from "@/lib/flood/types";
 import { cn } from "@/lib/utils";
+import { GIBS_ATTRIBUTION, gibsImergUrl, gibsTrueColorUrl } from "@/services/satelliteService";
+import {
+  getRadarComposite,
+  radarTileUrl,
+  RAINVIEWER_ATTRIBUTION,
+  type RadarComposite,
+} from "@/services/radarService";
 
 function FlyTo({ lat, lng, zoom }: { lat: number; lng: number; zoom: number }) {
   const map = useMap();
@@ -17,7 +24,11 @@ function FlyTo({ lat, lng, zoom }: { lat: number; lng: number; zoom: number }) {
   return null;
 }
 
-function ClickHandler({ onMapClick }: { onMapClick?: ((lat: number, lng: number) => void) | undefined }) {
+function ClickHandler({
+  onMapClick,
+}: {
+  onMapClick?: ((lat: number, lng: number, name?: string) => void) | undefined;
+}) {
   useMapEvents({
     click(e) {
       onMapClick?.(e.latlng.lat, e.latlng.lng);
@@ -25,7 +36,6 @@ function ClickHandler({ onMapClick }: { onMapClick?: ((lat: number, lng: number)
   });
   return null;
 }
-
 
 interface SafeMarker {
   id: string;
@@ -44,7 +54,7 @@ interface Props {
   userLocation?: { lat: number; lng: number } | null;
   safePlaces?: SafeMarker[];
   pinnedLocation?: { lat: number; lng: number } | null;
-  onMapClick?: (lat: number, lng: number) => void;
+  onMapClick?: (lat: number, lng: number, name?: string) => void;
 }
 
 export default function IndiaMap({
@@ -68,10 +78,31 @@ export default function IndiaMap({
   const inputRef = useRef<HTMLInputElement>(null);
   const results = useMemo(() => searchPlaces(query), [query]);
 
+  // Live tile overlays (all keyless public sources).
+  const [layers, setLayers] = useState({ satellite: false, imerg: false, radar: false });
+  const [opacity, setOpacity] = useState(0.6);
+  const [radar, setRadar] = useState<RadarComposite | null>(null);
+  const [radarError, setRadarError] = useState<string | null>(null);
+
   useEffect(() => {
     // keep default marker asset resolution from breaking in bundlers
     delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
   }, []);
+
+  useEffect(() => {
+    if (!layers.radar || radar) return;
+    const controller = new AbortController();
+    getRadarComposite(controller.signal)
+      .then((c) => {
+        setRadar(c);
+        setRadarError(null);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setRadarError(err instanceof Error ? err.message : "Radar data unavailable.");
+      });
+    return () => controller.abort();
+  }, [layers.radar, radar]);
 
   const selectPlace = (p: SearchPlace) => {
     setQuery("");
@@ -85,8 +116,13 @@ export default function IndiaMap({
         `${p.city}, ${p.state} is not directly modelled — showing the nearest modelled proxy, ${p.proxyCity} (${p.proxyKm} km away).`,
       );
     }
+    // Any searched place also drives the live data pipeline for its own coordinates.
+    onMapClick?.(p.lat, p.lng, `${p.city}, ${p.state}`);
     inputRef.current?.blur();
   };
+
+  const toggle = (key: keyof typeof layers) =>
+    setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <div className="relative h-[420px] w-full overflow-hidden rounded-xl border border-border sm:h-[520px]">
@@ -102,6 +138,37 @@ export default function IndiaMap({
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
         />
+
+        {layers.satellite ? (
+          <TileLayer
+            key="gibs-truecolor"
+            url={gibsTrueColorUrl()}
+            attribution={GIBS_ATTRIBUTION}
+            opacity={opacity}
+            maxNativeZoom={8}
+            tms={false}
+          />
+        ) : null}
+
+        {layers.imerg ? (
+          <TileLayer
+            key="gibs-imerg"
+            url={gibsImergUrl()}
+            attribution={GIBS_ATTRIBUTION}
+            opacity={opacity}
+            maxNativeZoom={6}
+          />
+        ) : null}
+
+        {layers.radar && radar ? (
+          <TileLayer
+            key={`radar-${radar.latest.time}`}
+            url={radarTileUrl(radar)}
+            attribution={RAINVIEWER_ATTRIBUTION}
+            opacity={opacity}
+          />
+        ) : null}
+
         <FlyTo lat={view.lat} lng={view.lng} zoom={view.zoom} />
         <ClickHandler onMapClick={onMapClick} />
 
@@ -146,7 +213,12 @@ export default function IndiaMap({
                 fillOpacity: 0.9,
                 weight: active ? 3 : 1.5,
               }}
-              eventHandlers={{ click: () => onSelect(loc.id) }}
+              eventHandlers={{
+                click: () => {
+                  onSelect(loc.id);
+                  onMapClick?.(loc.lat, loc.lng, `${loc.city}, ${loc.state}`);
+                },
+              }}
             >
               <Popup>
                 <div className="text-xs">
@@ -275,6 +347,56 @@ export default function IndiaMap({
           <Layers className="size-4" />
           Inundation layer {showInundation ? "on" : "off"}
         </button>
+
+        <div className="glass-panel rounded-xl px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Live overlays
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {(
+              [
+                ["satellite", "NASA VIIRS"],
+                ["imerg", "IMERG rain"],
+                ["radar", "Radar"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => toggle(key)}
+                aria-pressed={layers[key]}
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors",
+                  layers[key]
+                    ? "border-info/40 bg-info/15 text-info"
+                    : "border-border bg-surface text-muted-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {layers.radar && !radar ? (
+            <p className="mt-1.5 text-[10px] text-muted-foreground">
+              {radarError ?? "Loading radar frames…"}
+            </p>
+          ) : null}
+          {(layers.satellite || layers.imerg || layers.radar) ? (
+            <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+              Opacity
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={opacity}
+                aria-label="Overlay opacity"
+                onChange={(e) => setOpacity(Number(e.target.value))}
+                className="h-1 w-24 accent-[color:var(--color-info,#38bdf8)]"
+              />
+            </label>
+          ) : null}
+        </div>
+
         <div className="glass-panel rounded-xl px-3 py-2">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             Risk level
