@@ -1,4 +1,4 @@
-```tsx
+
 import { BadgeCheck, Clock3, MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -96,4 +96,4 @@ export function ReportsFeed({
     </ul>
   );
 }
-```
+
