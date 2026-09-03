@@ -1,14 +1,18 @@
+```tsx
 import { BadgeCheck, Clock3, MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { RISK_LEVEL_META } from "@/lib/flood/mock-data";
-import { timeAgo } from "@/lib/flood/format";
+import { levelClasses, timeAgo } from "@/lib/flood/format";
 import type { CitizenReport } from "@/lib/flood/types";
 import { EmptyState } from "@/components/flood/primitives";
-import { levelClasses } from "@/lib/flood/format";
 import { cn } from "@/lib/utils";
 
-function ClientTimeAgo({ reportedAt }: { reportedAt: string | number | Date }) {
+function ClientTimeAgo({
+  reportedAt,
+}: {
+  reportedAt: string | number | Date;
+}) {
   const [text, setText] = useState("");
 
   useEffect(() => {
@@ -18,7 +22,11 @@ function ClientTimeAgo({ reportedAt }: { reportedAt: string | number | Date }) {
   return <>{text || "Recently"}</>;
 }
 
-export function ReportsFeed({ reports }: { reports: CitizenReport[] }) {
+export function ReportsFeed({
+  reports,
+}: {
+  reports: CitizenReport[];
+}) {
   if (reports.length === 0) {
     return (
       <EmptyState
@@ -88,3 +96,4 @@ export function ReportsFeed({ reports }: { reports: CitizenReport[] }) {
     </ul>
   );
 }
+```
