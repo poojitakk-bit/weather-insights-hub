@@ -8,10 +8,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getLocationWeather, type LocationWeather } from "@/services/weatherService";
-import { getSatellitePrecipitation, type SatellitePrecipitation } from "@/services/satelliteService";
+import {
+  getSatellitePrecipitation,
+  type SatellitePrecipitation,
+} from "@/services/satelliteService";
 import { getRadarComposite, type RadarComposite } from "@/services/radarService";
 import {
   computeFloodRisk,
+  predictWithML,
   sourceAgreement,
   type FloodRiskIndicator,
 } from "@/services/floodRiskService";
@@ -62,11 +66,66 @@ export async function loadLocationData(
 
   const elevationM = weather?.elevationM ?? satellite?.elevationM ?? null;
 
-  const risk = computeFloodRisk({
-    metrics: weather?.metrics ?? null,
-    satellite,
-    elevationM,
-  });
+  /*
+   * Try the trained Python Random Forest model first.
+   *
+   * If the ML API is unavailable, fall back to the existing deterministic
+   * flood-risk calculation so the dashboard continues working.
+   */
+  let risk: FloodRiskIndicator;
+
+  try {
+    const mlPrediction = await predictWithML({
+      latitude: lat,
+      longitude: lng,
+      rainfall24h: weather?.metrics.next24hMm ?? 0,
+      temperature: weather?.current.temperatureC ?? 25,
+      humidity: weather?.current.humidityPct ?? 70,
+      runoff24h: weather?.metrics.runoff24hMm ?? 0,
+      elevationM: elevationM ?? 100,
+    });
+
+    const score = Math.round(mlPrediction.probability);
+
+    const level =
+      score >= 75
+        ? "severe"
+        : score >= 50
+          ? "high"
+          : score >= 25
+            ? "moderate"
+            : "low";
+
+    risk = {
+      score,
+      level,
+      coveragePct: 100,
+      method:
+        "Random Forest ML prediction using live Open-Meteo weather data with prototype fallback values for unavailable hydrological and geographic features.",
+      drivers: [
+        {
+          id: "random-forest",
+          label: "Random Forest flood prediction",
+          points: score,
+          maxPoints: 100,
+          detail: `${mlPrediction.probability.toFixed(1)}% predicted flood probability`,
+          source: "Python Random Forest ML API",
+          available: true,
+        },
+      ],
+    };
+  } catch (error) {
+    console.warn(
+      "ML prediction unavailable, using deterministic fallback:",
+      error,
+    );
+
+    risk = computeFloodRisk({
+      metrics: weather?.metrics ?? null,
+      satellite,
+      elevationM,
+    });
+  }
 
   const sources: SourceStatus[] = [
     {
@@ -74,14 +133,18 @@ export async function loadLocationData(
       name: "Open-Meteo forecast",
       ok: weather !== null,
       error: reason(weatherR),
-      freshness: weather ? `Hour ${weather.current.time.slice(11, 16)} IST` : null,
+      freshness: weather
+        ? `Hour ${weather.current.time.slice(11, 16)} IST`
+        : null,
     },
     {
       id: "nasa-power",
       name: "NASA POWER satellite rainfall",
       ok: satellite !== null,
       error: reason(satelliteR),
-      freshness: satellite ? `${satellite.latencyHours} h behind real time` : null,
+      freshness: satellite
+        ? `${satellite.latencyHours} h behind real time`
+        : null,
     },
     {
       id: "rainviewer",
@@ -100,7 +163,10 @@ export async function loadLocationData(
     satellite,
     radar,
     risk,
-    agreement: sourceAgreement(weather?.metrics.past24hMm ?? null, satellite?.last24hMm ?? null),
+    agreement: sourceAgreement(
+      weather?.metrics.past24hMm ?? null,
+      satellite?.last24hMm ?? null,
+    ),
     sources,
     loadedAt: Date.now(),
   };
@@ -138,73 +204,121 @@ export function useLocationData(): UseLocationData {
 
   const abortRef = useRef<AbortController | null>(null);
   const requestRef = useRef(0);
-  const lastRef = useRef<{ lat: number; lng: number; name: string } | null>(null);
+  const lastRef = useRef<{
+    lat: number;
+    lng: number;
+    name: string;
+  } | null>(null);
 
-  const run = useCallback((lat: number, lng: number, name: string, useCache: boolean) => {
-    lastRef.current = { lat, lng, name };
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const id = ++requestRef.current;
+  const run = useCallback(
+    (lat: number, lng: number, name: string, useCache: boolean) => {
+      lastRef.current = { lat, lng, name };
 
-    const key = cacheKey(lat, lng);
-    const cached = cache.get(key);
-    if (useCache && cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
-      setData({ ...cached, name });
-      setStatus("ready");
+      abortRef.current?.abort();
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const id = ++requestRef.current;
+
+      const key = cacheKey(lat, lng);
+      const cached = cache.get(key);
+
+      if (
+        useCache &&
+        cached &&
+        Date.now() - cached.loadedAt < CACHE_TTL_MS
+      ) {
+        setData({ ...cached, name });
+        setStatus("ready");
+        setError(null);
+        setStale(false);
+        return;
+      }
+
+      setStale(cached != null);
+
+      if (cached) {
+        setData({ ...cached, name });
+      }
+
+      setStatus("loading");
       setError(null);
-      setStale(false);
-      return;
-    }
 
-    setStale(cached != null);
-    if (cached) setData({ ...cached, name });
-    setStatus("loading");
-    setError(null);
+      loadLocationData(lat, lng, name, controller.signal)
+        .then((result) => {
+          if (requestRef.current !== id) return;
 
-    loadLocationData(lat, lng, name, controller.signal)
-      .then((result) => {
-        if (requestRef.current !== id) return;
-        cache.set(key, result);
-        setData(result);
-        setStale(false);
-        if (result.sources.every((s) => !s.ok)) {
+          cache.set(key, result);
+          setData(result);
+          setStale(false);
+
+          if (result.sources.every((s) => !s.ok)) {
+            setStatus("error");
+            setError("All live data sources failed for this location.");
+          } else {
+            setStatus("ready");
+          }
+        })
+        .catch((err: unknown) => {
+          if (requestRef.current !== id) return;
+
+          if (
+            err instanceof DOMException &&
+            err.name === "AbortError"
+          ) {
+            return;
+          }
+
+          setStale(false);
           setStatus("error");
-          setError("All live data sources failed for this location.");
-        } else {
-          setStatus("ready");
-        }
-      })
-      .catch((err: unknown) => {
-        if (requestRef.current !== id) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setStale(false);
-        setStatus("error");
-        setError(err instanceof Error ? err.message : "Could not load live data.");
-      });
-  }, []);
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Could not load live data.",
+          );
+        });
+    },
+    [],
+  );
 
   const select = useCallback(
-    (lat: number, lng: number, name: string) => run(lat, lng, name, true),
+    (lat: number, lng: number, name: string) =>
+      run(lat, lng, name, true),
     [run],
   );
 
   const refresh = useCallback(() => {
     const last = lastRef.current;
-    if (last) run(last.lat, last.lng, last.name, false);
+
+    if (last) {
+      run(last.lat, last.lng, last.name, false);
+    }
   }, [run]);
 
   const clear = useCallback(() => {
     abortRef.current?.abort();
     requestRef.current++;
+
     lastRef.current = null;
+
     setData(null);
     setStatus("idle");
     setError(null);
     setStale(false);
   }, []);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
-  return { status, data, error, stale, select, refresh, clear };
+  return {
+    status,
+    data,
+    error,
+    stale,
+    select,
+    refresh,
+    clear,
+  };
 }
