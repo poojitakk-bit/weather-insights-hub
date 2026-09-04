@@ -27,8 +27,16 @@ const levelClass: Record<string, string> = {
 };
 
 /** Live, real data for a point the user picked on the map (not one of the demo cities). */
-export function LiveWeatherPanel({ coords, status, data, error, stale, onRetry }: Props) {
-  const weather = data?.weather ?? null;
+export function LiveWeatherPanel({
+  coords,
+  status,
+  data = null,
+  weather: weatherProp = null,
+  error,
+  stale = false,
+  onRetry,
+}: Props) {
+  const weather = data?.weather ?? weatherProp ?? null;
   const metrics = weather?.metrics ?? null;
 
   return (
