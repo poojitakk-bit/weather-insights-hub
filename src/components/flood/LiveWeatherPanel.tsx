@@ -3,15 +3,19 @@ import { AlertTriangle, CheckCircle2, MapPin, Satellite } from "lucide-react";
 import { ErrorState, LoadingState, Stat } from "@/components/flood/primitives";
 import { cn } from "@/lib/utils";
 import type { LocationData } from "@/services/locationDataService";
+import type { LocationWeather } from "@/services/weatherService";
 
 export type PinnedWeatherStatus = "idle" | "loading" | "ready" | "error";
 
 interface Props {
   coords: { lat: number; lng: number };
   status: PinnedWeatherStatus;
-  data: LocationData | null;
+  /** Full multi-source payload (weather + satellite + radar + risk), when available. */
+  data?: LocationData | null;
+  /** Weather-only payload, used when the full multi-source payload is not wired up. */
+  weather?: LocationWeather | null;
   error: string | null;
-  stale: boolean;
+  stale?: boolean;
   onRetry: () => void;
 }
 
