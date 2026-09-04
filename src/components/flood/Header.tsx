@@ -1,4 +1,5 @@
-import { Activity, ShieldAlert, Waves, WifiOff } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Activity, LogIn, ShieldAlert, Waves, WifiOff } from "lucide-react";
 
 import { DISCLAIMER, LOCATIONS, SCENARIOS } from "@/lib/flood/mock-data";
 import { clockTime } from "@/lib/flood/format";
