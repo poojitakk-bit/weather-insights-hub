@@ -1,4 +1,5 @@
-import { Activity, ShieldAlert, Waves, WifiOff } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Activity, LogIn, ShieldAlert, Waves, WifiOff } from "lucide-react";
 
 import { DISCLAIMER, LOCATIONS, SCENARIOS } from "@/lib/flood/mock-data";
 import { clockTime } from "@/lib/flood/format";
@@ -30,7 +31,7 @@ export function Header({
           </span>
           <div>
             <h1 className="font-display text-xl leading-tight sm:text-2xl">
-              <span className="text-gradient-flood">India Flood Intelligence</span>
+              <span className="text-gradient-flood">Weather Insights</span>
             </h1>
             <p className="text-xs text-muted-foreground">
               AI/ML heavy-rainfall early warning &amp; inundation prediction · research prototype
@@ -59,6 +60,12 @@ export function Header({
           <span className="flex items-center gap-1.5 rounded-full border border-danger/35 bg-danger/15 px-3 py-1.5 text-[11px] font-semibold text-danger">
             <ShieldAlert className="size-3.5" /> {severe} severe · {high} high
           </span>
+          <Link
+            to="/login"
+            className="flex items-center gap-1.5 rounded-full border border-info/40 bg-info/15 px-3 py-1.5 text-[11px] font-semibold text-info transition-colors hover:bg-info/25"
+          >
+            <LogIn className="size-3.5" /> Sign in
+          </Link>
         </div>
       </div>
 

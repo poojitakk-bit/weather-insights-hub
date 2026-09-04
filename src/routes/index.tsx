@@ -59,10 +59,10 @@ import { predictWithML } from "@/services/floodRiskService";
 const IndiaMap = lazy(() => import("@/components/flood/IndiaMap"));
 
 const TITLE =
-  "India Flood Intelligence — Rainfall & Inundation Early Warning Prototype";
+  "Weather Insights — Live Rainfall & Flood Risk Dashboard";
 
 const DESCRIPTION =
-  "Research prototype dashboard for AI/ML heavy-rainfall early warning and flood inundation prediction.";
+  "Weather Insights: live rainfall, satellite and radar data with AI/ML flood-risk prediction for any location in India.";
 
 export const Route = createFileRoute("/")({
   head: () => ({

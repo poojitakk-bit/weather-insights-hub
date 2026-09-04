@@ -3,15 +3,19 @@ import { AlertTriangle, CheckCircle2, MapPin, Satellite } from "lucide-react";
 import { ErrorState, LoadingState, Stat } from "@/components/flood/primitives";
 import { cn } from "@/lib/utils";
 import type { LocationData } from "@/services/locationDataService";
+import type { LocationWeather } from "@/services/weatherService";
 
 export type PinnedWeatherStatus = "idle" | "loading" | "ready" | "error";
 
 interface Props {
   coords: { lat: number; lng: number };
   status: PinnedWeatherStatus;
-  data: LocationData | null;
+  /** Full multi-source payload (weather + satellite + radar + risk), when available. */
+  data?: LocationData | null;
+  /** Weather-only payload, used when the full multi-source payload is not wired up. */
+  weather?: LocationWeather | null;
   error: string | null;
-  stale: boolean;
+  stale?: boolean;
   onRetry: () => void;
 }
 
@@ -23,8 +27,16 @@ const levelClass: Record<string, string> = {
 };
 
 /** Live, real data for a point the user picked on the map (not one of the demo cities). */
-export function LiveWeatherPanel({ coords, status, data, error, stale, onRetry }: Props) {
-  const weather = data?.weather ?? null;
+export function LiveWeatherPanel({
+  coords,
+  status,
+  data = null,
+  weather: weatherProp = null,
+  error,
+  stale = false,
+  onRetry,
+}: Props) {
+  const weather = data?.weather ?? weatherProp ?? null;
   const metrics = weather?.metrics ?? null;
 
   return (
@@ -52,11 +64,11 @@ export function LiveWeatherPanel({ coords, status, data, error, stale, onRetry }
         ) : null}
       </div>
 
-      {status === "loading" && !data ? (
+      {status === "loading" && !data && !weather ? (
         <LoadingState label="Fetching live weather, satellite and radar data…" />
-      ) : status === "error" && !data ? (
+      ) : status === "error" && !data && !weather ? (
         <ErrorState message={error ?? "Could not load live data for this point."} onRetry={onRetry} />
-      ) : data ? (
+      ) : data || weather ? (
         <div className="space-y-3">
           {weather ? (
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -95,7 +107,7 @@ export function LiveWeatherPanel({ coords, status, data, error, stale, onRetry }
             </div>
           ) : null}
 
-          {data.satellite ? (
+          {data?.satellite ? (
             <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Satellite className="size-3.5 text-info" />
               NASA POWER satellite rainfall {data.satellite.last24hMm.toFixed(1)} mm over its last
@@ -103,6 +115,8 @@ export function LiveWeatherPanel({ coords, status, data, error, stale, onRetry }
             </p>
           ) : null}
 
+          {data ? (
+            <>
           {/* Source availability + agreement */}
           <div className="flex flex-wrap items-center gap-1.5">
             {data.sources.map((s) => (
@@ -157,6 +171,8 @@ export function LiveWeatherPanel({ coords, status, data, error, stale, onRetry }
             ))}
             <p className="text-[10px] leading-relaxed text-muted-foreground">{data.risk.method}</p>
           </div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -79,13 +79,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "India Flood Intelligence" },
+      { title: "Weather Insights" },
       {
         name: "description",
         content:
           "Research prototype for AI/ML heavy-rainfall early warning and flood inundation prediction across India.",
       },
-      { property: "og:title", content: "India Flood Intelligence" },
+      { property: "og:title", content: "Weather Insights" },
       {
         property: "og:description",
         content:
