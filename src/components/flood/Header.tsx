@@ -59,6 +59,12 @@ export function Header({
           <span className="flex items-center gap-1.5 rounded-full border border-danger/35 bg-danger/15 px-3 py-1.5 text-[11px] font-semibold text-danger">
             <ShieldAlert className="size-3.5" /> {severe} severe · {high} high
           </span>
+          <Link
+            to="/login"
+            className="flex items-center gap-1.5 rounded-full border border-info/40 bg-info/15 px-3 py-1.5 text-[11px] font-semibold text-info transition-colors hover:bg-info/25"
+          >
+            <LogIn className="size-3.5" /> Sign in
+          </Link>
         </div>
       </div>
 
