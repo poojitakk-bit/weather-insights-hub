@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 function ClientTimeAgo({
   reportedAt,
 }: {
-  reportedAt: string | number | Date;
+  reportedAt: string;
 }) {
   const [text, setText] = useState("");
 
