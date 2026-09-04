@@ -64,11 +64,11 @@ export function LiveWeatherPanel({
         ) : null}
       </div>
 
-      {status === "loading" && !data ? (
+      {status === "loading" && !data && !weather ? (
         <LoadingState label="Fetching live weather, satellite and radar data…" />
-      ) : status === "error" && !data ? (
+      ) : status === "error" && !data && !weather ? (
         <ErrorState message={error ?? "Could not load live data for this point."} onRetry={onRetry} />
-      ) : data ? (
+      ) : data || weather ? (
         <div className="space-y-3">
           {weather ? (
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -107,7 +107,7 @@ export function LiveWeatherPanel({
             </div>
           ) : null}
 
-          {data.satellite ? (
+          {data?.satellite ? (
             <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Satellite className="size-3.5 text-info" />
               NASA POWER satellite rainfall {data.satellite.last24hMm.toFixed(1)} mm over its last
@@ -117,6 +117,8 @@ export function LiveWeatherPanel({
 
           {/* Source availability + agreement */}
           <div className="flex flex-wrap items-center gap-1.5">
+            {data ? (
+            <>
             {data.sources.map((s) => (
               <span
                 key={s.id}
