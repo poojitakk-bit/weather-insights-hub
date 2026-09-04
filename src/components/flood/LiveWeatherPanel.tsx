@@ -115,10 +115,10 @@ export function LiveWeatherPanel({
             </p>
           ) : null}
 
+          {data ? (
+            <>
           {/* Source availability + agreement */}
           <div className="flex flex-wrap items-center gap-1.5">
-            {data ? (
-            <>
             {data.sources.map((s) => (
               <span
                 key={s.id}
@@ -171,6 +171,8 @@ export function LiveWeatherPanel({
             ))}
             <p className="text-[10px] leading-relaxed text-muted-foreground">{data.risk.method}</p>
           </div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
