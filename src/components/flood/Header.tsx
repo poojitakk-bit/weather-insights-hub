@@ -30,7 +30,7 @@ export function Header({
           </span>
           <div>
             <h1 className="font-display text-xl leading-tight sm:text-2xl">
-              <span className="text-gradient-flood">India Flood Intelligence</span>
+              <span className="text-gradient-flood">Weather Insights</span>
             </h1>
             <p className="text-xs text-muted-foreground">
               AI/ML heavy-rainfall early warning &amp; inundation prediction · research prototype
